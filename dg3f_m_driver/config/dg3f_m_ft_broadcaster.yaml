@@ -1,0 +1,28 @@
+# DG3F-M - Fingertip F/T Sensor Broadcaster Configuration
+# This file is loaded conditionally when fingertip_sensor:=true
+
+/**/controller_manager:
+  ros__parameters:
+    # Fingertip F/T sensor broadcasters
+    fingertip_1_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+    fingertip_2_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+    fingertip_3_broadcaster:
+      type: force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster
+
+# Fingertip F/T sensor broadcaster configurations
+/**/fingertip_1_broadcaster:
+  ros__parameters:
+    frame_id: "fingertip_1"
+    sensor_name: "fingertip_finger_1"
+
+/**/fingertip_2_broadcaster:
+  ros__parameters:
+    frame_id: "fingertip_2"
+    sensor_name: "fingertip_finger_2"
+
+/**/fingertip_3_broadcaster:
+  ros__parameters:
+    frame_id: "fingertip_3"
+    sensor_name: "fingertip_finger_3"

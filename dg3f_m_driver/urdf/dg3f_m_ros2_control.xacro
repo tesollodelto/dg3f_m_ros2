@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<robot name="delto_5f" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <!-- Default argument values -->
+    <xacro:arg name="delto_ip" default="169.254.186.72" />
+    <xacro:arg name="delto_port" default="502" />
+    <xacro:arg name="fingertip_sensor" default="false" />
+    <xacro:arg name="io" default="false" />
+
+    <!-- 손 방향 설정 (right 또는 left) -->
+    <!-- <xacro:arg name="hand" default="right"/> -->
+
+    <!-- prefix 변수 지정 -->
+    <!-- <xacro:property name="prefix" value="${'rj' if hand == 'right' else 'lj'}"/> -->
+
+
+    <xacro:include filename="$(find dg3f_m_description)/urdf/dg3f_m.urdf"/>
+
+
+    <link name="base_link" />
+
+    <joint name="base_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="l_dg_mount"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+    </joint>
+
+    <!-- Fingertip F/T sensor frames -->
+    <!-- Finger 1 -->
+    <link name="fingertip_1" />
+    <joint name="fingertip_1_joint" type="fixed">
+        <parent link="l_dg_1_tip" />
+        <child link="fingertip_1" />
+        <origin xyz="0 0 0" rpy="0 0 3.14159" />
+    </joint>
+
+    <!-- Finger 2 -->
+    <link name="fingertip_2" />
+    <joint name="fingertip_2_joint" type="fixed">
+        <parent link="l_dg_2_tip" />
+        <child link="fingertip_2" />
+        <origin xyz="0 0 0" rpy="0 0 0" />
+    </joint>
+
+    <!-- Finger 3 -->
+    <link name="fingertip_3" />
+    <joint name="fingertip_3_joint" type="fixed">
+        <parent link="l_dg_3_tip" />
+        <child link="fingertip_3" />
+        <origin xyz="0 0 0" rpy="0 0 0" />
+    </joint>
+
+    <ros2_control name="dg3f_m_driver" type="system">
+        <hardware>
+            <plugin>delto_hardware/SystemInterface</plugin>
+            <param name="delto_ip">$(arg delto_ip)</param>
+            <param name="delto_port">$(arg delto_port)</param>
+            <param name="delto_model">16130</param> <!-- 0x3F02 -->
+            <param name="fingertip_sensor">$(arg fingertip_sensor)</param>
+            <param name="IO">$(arg io)</param>
+        </hardware>
+
+        <!-- Finger 1 joints -->
+        <joint name="j_dg_1_1">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_1_2">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_1_3">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_1_4">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+
+        <!-- Finger 2 joints -->
+        <joint name="j_dg_2_1">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_2_2">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_2_3">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_2_4">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+
+        <!-- Finger 3 joints -->
+        <joint name="j_dg_3_1">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_3_2">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_3_3">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+        <joint name="j_dg_3_4">
+            <command_interface name="effort"/>
+            <state_interface name="position"/>
+            <state_interface name="velocity"/>
+        </joint>
+
+        <!-- FT sensors for each finger (3f) -->
+        <sensor name="fingertip_finger_1" type="force_torque">
+            <param name="frame_id">fingertip_1</param>
+        </sensor>
+        <sensor name="fingertip_finger_2" type="force_torque">
+            <param name="frame_id">fingertip_2</param>
+        </sensor>
+        <sensor name="fingertip_finger_3" type="force_torque">
+            <param name="frame_id">fingertip_3</param>
+        </sensor>
+    </ros2_control>
+</robot>
