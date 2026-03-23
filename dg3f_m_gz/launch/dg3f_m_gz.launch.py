@@ -55,7 +55,7 @@ def generate_launch_description():
     # Get package paths
     pkg_description = FindPackageShare(
         "dg3f_m_description").find("dg3f_m_description")
-    model_path = os.path.join(pkg_description, "meshes")
+    model_path = os.path.dirname(pkg_description)
 
     # Set Gazebo model path
     if 'IGN_GAZEBO_RESOURCE_PATH' in os.environ:
