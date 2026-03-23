@@ -47,6 +47,9 @@ ros2 launch dg3f_m_driver dg3f_m_driver.launch.py
 # Effort controller
 ros2 launch dg3f_m_driver dg3f_m_effort_controller.launch.py
 
+# PID controller
+ros2 launch dg3f_m_driver dg3f_m_pid_controller.launch.py
+
 # Gazebo simulation
 ros2 launch dg3f_m_gz dg3f_m_gz.launch.py
 ```
