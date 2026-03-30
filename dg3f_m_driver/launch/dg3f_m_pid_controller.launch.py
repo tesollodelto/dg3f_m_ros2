@@ -69,6 +69,7 @@ def generate_launch_description():
         )
     )
     fingertip_sensor = LaunchConfiguration("fingertip_sensor")
+    ft_broadcaster = LaunchConfiguration("ft_broadcaster")
 
     declared_arguments.append(
         DeclareLaunchArgument(
@@ -125,7 +126,7 @@ def generate_launch_description():
             ("~/robot_description", "/" + ns + "/robot_description"),
         ],
         output="screen",
-        condition=UnlessCondition(fingertip_sensor),
+        condition=UnlessCondition(ft_broadcaster),
     )
 
     # ROS2 Control Node (FT 센서 활성화)
@@ -138,7 +139,7 @@ def generate_launch_description():
             ("~/robot_description", "/" + ns + "/robot_description"),
         ],
         output="screen",
-        condition=IfCondition(fingertip_sensor),
+        condition=IfCondition(ft_broadcaster),
     )
 
     # Robot State Publisher
@@ -172,7 +173,7 @@ def generate_launch_description():
         executable="spawner",
         arguments=["fingertip_1_broadcaster", "-c", "/" + ns + "/controller_manager"],
         output="screen",
-        condition=IfCondition(fingertip_sensor),
+        condition=IfCondition(ft_broadcaster),
     )
 
     fingertip_2_broadcaster_spawner = Node(
@@ -180,7 +181,7 @@ def generate_launch_description():
         executable="spawner",
         arguments=["fingertip_2_broadcaster", "-c", "/" + ns + "/controller_manager"],
         output="screen",
-        condition=IfCondition(fingertip_sensor),
+        condition=IfCondition(ft_broadcaster),
     )
 
     fingertip_3_broadcaster_spawner = Node(
@@ -188,7 +189,7 @@ def generate_launch_description():
         executable="spawner",
         arguments=["fingertip_3_broadcaster", "-c", "/" + ns + "/controller_manager"],
         output="screen",
-        condition=IfCondition(fingertip_sensor),
+        condition=IfCondition(ft_broadcaster),
     )
 
     # List all nodes to start
