@@ -13,13 +13,13 @@ cd ~/your_ws
 
 ### Update rosdep
 ```bash
-apt update
+sudo apt update
 rosdep update
 ```
 
 ### Install Specific Dependencies
 ```bash
-rosdep install --from-paths src/DELTO_M_ROS2/dg3f_m_driver --ignore-src -r -y
+rosdep install --from-paths src/tesollo_ros2/dg3f_m_ros2/dg3f_m_driver --ignore-src -r -y
 ```
 
 ### Verify Installation by Building

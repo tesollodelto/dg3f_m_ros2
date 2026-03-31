@@ -18,16 +18,16 @@ cd ~/your_ws
 ### 2️⃣ Update rosdep (without sudo)
 
 ```bash
-apt update
+sudo apt update
 rosdep update
 ```
 
 > ⚠️ **Important:** Do **not** use `sudo` when running `rosdep update`.
 
-### 3️⃣ Install dependencies only for the specific package (`dg3f_gz`)
+### 3️⃣ Install dependencies only for the specific package (`dg3f_m_gz`)
 
 ```bash
-rosdep install --from-paths src/DELTO_M_ROS2/dg3f_m_gz --ignore-src -r -y
+rosdep install --from-paths src/tesollo_ros2/dg3f_m_ros2/dg3f_m_gz --ignore-src -r -y
 ```
 
 - `--from-paths`: Limits dependency checking to the specified path
@@ -42,7 +42,7 @@ rosdep install --from-paths src/DELTO_M_ROS2/dg3f_m_gz --ignore-src -r -y
 After installing dependencies, confirm the package builds successfully:
 
 ```bash
-colcon build --packages-select dg3f_gz
+colcon build --packages-select dg3f_m_gz
 ```
 
 This command builds only the `dg3f_m_gz` package, ensuring it compiles correctly.
@@ -52,14 +52,14 @@ This command builds only the `dg3f_m_gz` package, ensuring it compiles correctly
 
 ![dg3f_m Gripper Simulation](image/gazebo_capture.gif)
 
-Below are detailed instructions for launching the Delto Gripper-3F simulation and executing control commands using ROS 2 Control.
+Below are detailed instructions for launching the Delto Gripper-3F-M simulation and executing control commands using ROS 2 Control.
 
 
-## 🎛️ Controlling Left Delto Gripper-3F
+## 🎛️ Controlling Delto Gripper-3F-M
 
 ### 1\. Loading a URDF model into Gazebo
 
-Launch the Left Delto Gripper-3F simulation with:
+Launch the Delto Gripper-3F-M simulation with:
 ```bash
 ros2 launch dg3f_m_gz dg3f_m_gz.launch.py
 ```
@@ -68,18 +68,18 @@ This command initializes Gazebo, loads the specified URDF robot description, and
 
 ### 2\. Sending control commands using ROS 2 Control
 
--  **Python Example**: [dg3f_m_left_gz_test.py](script/dg3f_m_gz_test.py)
+-  **Python Example**: [dg3f_m_gz_test.py](script/dg3f_m_gz_test.py)
 
 Run the Python test script:
 ```bash
 ros2 run dg3f_m_gz dg3f_m_gz_test.py
 ```
 
-- 💻 **C++ Example**: [dg3f_m_left_gz_test.cpp](src/dg3f_m_gz_test.cpp)
+- 💻 **C++ Example**: [dg3f_m_gz_test.cpp](src/dg3f_m_gz_test.cpp)
 
 Execute the C++ test node:
 ```bash
-ros2 run dg3f_m_gz dg3f_gz_test_cpp
+ros2 run dg3f_m_gz dg3f_m_gz_test_cpp
 ```
 
 ## 🤝 Contributing
