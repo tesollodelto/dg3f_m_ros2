@@ -63,11 +63,13 @@ def generate_launch_description():
             default_value="false",
             description="Enable fingertip F/T sensor"
         )
+    )
+    declared_arguments.append(
         DeclareLaunchArgument(
             "ft_broadcaster",
             default_value="false",
             description="Enable F/T sensor broadcaster (force/torque only, not tactile)"
-        ),
+        )
     )
 
     declared_arguments.append(
