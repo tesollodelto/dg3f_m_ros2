@@ -1,0 +1,21 @@
+moveit_simple_controller_manager:
+  controller_names:
+    - dg3f_m_controller
+
+  dg3f_m_controller:
+    type: FollowJointTrajectory
+    action_ns: follow_joint_trajectory
+    default: true
+    joints:
+      - j_dg_1_1
+      - j_dg_1_2
+      - j_dg_1_3
+      - j_dg_1_4
+      - j_dg_2_1
+      - j_dg_2_2
+      - j_dg_2_3
+      - j_dg_2_4
+      - j_dg_3_1
+      - j_dg_3_2
+      - j_dg_3_3
+      - j_dg_3_4

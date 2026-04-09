@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="delto_5f">
+    <group name="finger_1">
+        <chain base_link="l_dg_base" tip_link="l_dg_1_tip" />
+    </group>
+    <group name="finger_2">
+        <chain base_link="l_dg_base" tip_link="l_dg_2_tip" />
+    </group>
+    <group name="finger_3">
+        <chain base_link="l_dg_base" tip_link="l_dg_3_tip" />
+    </group>
+    <group name="all_fingers">
+        <group name="finger_1" /><group name="finger_2" /><group name="finger_3" />
+    </group>
+
+    <group_state name="open" group="all_fingers">
+        <joint name="j_dg_1_1" value="0.0" /><joint name="j_dg_1_2" value="0.0" /><joint name="j_dg_1_3" value="0.0" /><joint name="j_dg_1_4" value="0.0" />
+        <joint name="j_dg_2_1" value="0.0" /><joint name="j_dg_2_2" value="0.0" /><joint name="j_dg_2_3" value="0.0" /><joint name="j_dg_2_4" value="0.0" />
+        <joint name="j_dg_3_1" value="0.0" /><joint name="j_dg_3_2" value="0.0" /><joint name="j_dg_3_3" value="0.0" /><joint name="j_dg_3_4" value="0.0" />
+    </group_state>
+
+    <!-- Disable collisions: base chain -->
+    <disable_collisions link1="base_link" link2="l_dg_mount" reason="Adjacent" />
+    <disable_collisions link1="l_dg_mount" link2="l_dg_base" reason="Adjacent" />
+    <disable_collisions link1="base_link" link2="l_dg_base" reason="Never" />
+
+    <!-- Finger 1 -->
+    <disable_collisions link1="l_dg_base" link2="l_dg_1_1" reason="Adjacent" />
+    <disable_collisions link1="l_dg_1_1" link2="l_dg_1_2" reason="Adjacent" />
+    <disable_collisions link1="l_dg_1_2" link2="l_dg_1_3" reason="Adjacent" />
+    <disable_collisions link1="l_dg_1_3" link2="l_dg_1_4" reason="Adjacent" />
+    <disable_collisions link1="l_dg_1_4" link2="l_dg_1_tip" reason="Adjacent" />
+
+    <!-- Finger 2 -->
+    <disable_collisions link1="l_dg_base" link2="l_dg_2_1" reason="Adjacent" />
+    <disable_collisions link1="l_dg_2_1" link2="l_dg_2_2" reason="Adjacent" />
+    <disable_collisions link1="l_dg_2_2" link2="l_dg_2_3" reason="Adjacent" />
+    <disable_collisions link1="l_dg_2_3" link2="l_dg_2_4" reason="Adjacent" />
+    <disable_collisions link1="l_dg_2_4" link2="l_dg_2_tip" reason="Adjacent" />
+
+    <!-- Finger 3 -->
+    <disable_collisions link1="l_dg_base" link2="l_dg_3_1" reason="Adjacent" />
+    <disable_collisions link1="l_dg_3_1" link2="l_dg_3_2" reason="Adjacent" />
+    <disable_collisions link1="l_dg_3_2" link2="l_dg_3_3" reason="Adjacent" />
+    <disable_collisions link1="l_dg_3_3" link2="l_dg_3_4" reason="Adjacent" />
+    <disable_collisions link1="l_dg_3_4" link2="l_dg_3_tip" reason="Adjacent" />
+</robot>
