@@ -131,7 +131,7 @@ def generate_launch_description():
     # Real hardware controller config
     real_controllers = PathJoinSubstitution(
         [FindPackageShare("dg3f_m_driver"), "config",
-         "dg3f_m_effort_controller.yaml"]
+         "dg3f_m_controller.yaml"]
     )
 
     # --- Mock hardware nodes ---
