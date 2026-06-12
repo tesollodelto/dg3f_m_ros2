@@ -3,9 +3,9 @@
 <package format="3">
   <name>dg3f_m_driver</name>
   <version>0.0.1</version>
-  <description>Tesollo DGr-3F-M ROS2 package</description>
-  <maintainer email="khc@tesollo.com">hong</maintainer>
-  <license>BSD3-clause</license>
+  <description>Tesollo DG-3F-M ROS2 package</description>
+  <maintainer email="khc@tesollo.com">hongcheol</maintainer>
+  <license>BSD-3-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
