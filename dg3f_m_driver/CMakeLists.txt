@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.12)
 project(dg3f_m_driver)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -11,9 +11,12 @@ find_package(trajectory_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(delto_hardware REQUIRED)
 
-# dg3f_m_operator_driver 빌드
 add_executable(dg3f_m_operator_driver src/dg3f_m_operator_driver.cpp)
-ament_target_dependencies(dg3f_m_operator_driver rclcpp trajectory_msgs sensor_msgs)
+target_link_libraries(dg3f_m_operator_driver
+  rclcpp::rclcpp
+  ${trajectory_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+)
 
 target_include_directories(dg3f_m_operator_driver PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -32,10 +35,16 @@ install(
 
 ### test control DG3F example
 add_executable(dg3f_m_test_cpp src/dg3f_m_test.cpp)
-ament_target_dependencies(dg3f_m_test_cpp rclcpp trajectory_msgs)
+target_link_libraries(dg3f_m_test_cpp
+  rclcpp::rclcpp
+  ${trajectory_msgs_TARGETS}
+)
 
 add_executable(dg3f_m_operator_test_cpp src/dg3f_m_operator_test.cpp)
-ament_target_dependencies(dg3f_m_operator_test_cpp rclcpp trajectory_msgs)
+target_link_libraries(dg3f_m_operator_test_cpp
+  rclcpp::rclcpp
+  ${trajectory_msgs_TARGETS}
+)
 
 install(
   PROGRAMS 
