@@ -66,14 +66,19 @@ ros2 launch dg3f_m_driver dg3f_m_effort_controller.launch.py delto_ip:=169.254.1
 
 | Script | Controller Type | Description |
 |--------|-----------------|-------------|
-| `dg3f_m_jtc_test.py` | JTC | JointTrajectory based test |
+| `dg3f_m_jtc_test.py` | JTC (topic) | JointTrajectory topic based test |
+| `dg3f_m_jtc_action_test.py` | JTC (action) | FollowJointTrajectory action based test |
 | `dg3f_m_operator_test.py` | Operator | Operator mode test |
 | `dg3f_m_effort_test.py` | Effort | Direct effort control test |
 | `dg3f_m_effort_simple_test.py` | Effort | Simple effort control test |
 
 **Python Example:**
 ```bash
+# Topic based (fire-and-forget)
 ros2 run dg3f_m_driver dg3f_m_jtc_test.py
+
+# Action based (sends the whole trajectory as one goal and waits for the result)
+ros2 run dg3f_m_driver dg3f_m_jtc_action_test.py
 ```
 
 **C++ Example:**

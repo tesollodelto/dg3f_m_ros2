@@ -38,8 +38,9 @@ add_executable(dg3f_m_operator_test_cpp src/dg3f_m_operator_test.cpp)
 ament_target_dependencies(dg3f_m_operator_test_cpp rclcpp trajectory_msgs)
 
 install(
-  PROGRAMS 
+  PROGRAMS
   script/dg3f_m_jtc_test.py
+  script/dg3f_m_jtc_action_test.py
   script/dg3f_m_operator_test.py
   script/dg3f_m_effort_test.py
   DESTINATION lib/${PROJECT_NAME}
