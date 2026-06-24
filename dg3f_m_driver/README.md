@@ -27,6 +27,14 @@ rosdep install --from-paths src/tesollo_ros2/dg3f_m_ros2/dg3f_m_driver --ignore-
 colcon build --packages-select dg3f_m_driver delto_hardware
 ```
 
+## ⚠️ Before You Control: Notes
+
+The dg3f_m_driver (ros2 control) operates in Developer Mode, which uses a custom protocol over Ethernet.
+Before launching the driver, set the gripper to **Developer Mode** and the communication mode to **EtherNET**.
+Please make sure that switches ② and ④ are in the correct positions, as shown in the attached image.
+
+<img src="./images/manual.png" width="400px"/>
+
 ---
 
 ## 🚀 Launch Files
