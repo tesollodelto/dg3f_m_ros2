@@ -42,7 +42,8 @@ Please make sure that switches ② and ④ are in the correct positions, as show
 | Launch File | Description | Controller Type |
 |-------------|-------------|-----------------|
 | `dg3f_m_driver.launch.py` | DG3F-M - JointTrajectoryController | Position (Trajectory) |
-| `dg3f_m_pid_controller.launch.py` | DG3F-M - PID Controller | PID (Position→Effort) |
+| `dg3f_m_pid_controller.launch.py` | DG3F-M - Individual per-joint PID Controllers | PID (Position→Effort) |
+| `dg3f_m_pid_all_controller.launch.py` | DG3F-M - Single grouped PID Controller (all joints) | PID (Position→Effort) |
 | `dg3f_m_effort_controller.launch.py` | DG3F-M - Direct Effort Control | Effort (Direct) |
 
 ---
@@ -56,11 +57,15 @@ Launch the Delto Gripper-3F-M controller with:
 ros2 launch dg3f_m_driver dg3f_m_driver.launch.py delto_ip:=169.254.186.72 delto_port:=502
 ```
 
-### 2. Loading DG3F-M PID controller
+### 2. Loading DG3F-M PID controllers
 
-For PID position control (position input → effort output):
+Two PID variants are available (both: position reference → effort output):
 ```bash
+# Individual: one PidController per joint (topic: /dg3f_m/<joint>_pospid/reference)
 ros2 launch dg3f_m_driver dg3f_m_pid_controller.launch.py delto_ip:=169.254.186.72
+
+# All-in-one: a single grouped PidController for every joint (topic: /dg3f_m/j_dg_pospid/reference)
+ros2 launch dg3f_m_driver dg3f_m_pid_all_controller.launch.py delto_ip:=169.254.186.72
 ```
 
 ### 3. Loading DG3F-M Effort controller
@@ -76,6 +81,8 @@ ros2 launch dg3f_m_driver dg3f_m_effort_controller.launch.py delto_ip:=169.254.1
 |--------|-----------------|-------------|
 | `dg3f_m_jtc_test.py` | JTC (topic) | JointTrajectory topic based test |
 | `dg3f_m_jtc_action_test.py` | JTC (action) | FollowJointTrajectory action based test |
+| `dg3f_m_pid_test.py` | PID (individual) | Publishes a reference to each per-joint `*_pospid` controller |
+| `dg3f_m_pid_all_test.py` | PID (all) | Publishes one reference to the grouped `j_dg_pospid` controller |
 | `dg3f_m_operator_test.py` | Operator | Operator mode test |
 | `dg3f_m_effort_test.py` | Effort | Direct effort control test |
 | `dg3f_m_effort_simple_test.py` | Effort | Simple effort control test |
@@ -103,10 +110,16 @@ ros2 run dg3f_m_driver dg3f_m_test_cpp
 - **Joints**: 12 joints (j_dg_1_1~1_4, j_dg_2_1~2_4, j_dg_3_1~3_4)
 - **Topic**: `/dg3f_m/delto_controller/joint_trajectory`
 
-### 2. PID Controller (Position → Effort)
-- **Purpose**: Position control with effort output using PID feedback
-- **Input**: Single position reference value
-- **Topic**: `/dg3f_m/pid_controller/reference`
+### 2. PID Controllers (Position → Effort)
+
+Naming convention (consistent across all Delto drivers):
+
+| Variant | Config | Controllers | Reference Topic |
+|---------|--------|-------------|-----------------|
+| **Individual** (`pid`) | `dg3f_m_pid_controller.yaml` | one `pid_controller/PidController` per joint, named `<joint>_pospid` | `/dg3f_m/<joint>_pospid/reference` |
+| **All-in-one** (`pid_all`) | `dg3f_m_pid_all_controller.yaml` | a single `pid_controller/PidController` named `j_dg_pospid` managing all joints | `/dg3f_m/j_dg_pospid/reference` |
+
+Both take a `control_msgs/MultiDOFCommand` position reference and output effort. Gains are seeded from the JTC config (`p: 1.5`).
 
 ### 3. Effort Controller (Direct)
 - **Purpose**: Direct effort control without position feedback

@@ -1,0 +1,61 @@
+/**/controller_manager:
+  ros__parameters:
+    update_rate: 300
+
+    # Single grouped PI position controller for all joints (output: effort)
+    j_dg_pospid: { type: pid_controller/PidController }
+
+    # State broadcaster (optional, usually loaded together)
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+# ------------- grouped PI gains -------------
+/**/j_dg_pospid:
+  ros__parameters:
+    dof_names:
+      [
+        "j_dg_1_1",
+        "j_dg_1_2",
+        "j_dg_1_3",
+        "j_dg_1_4",
+        "j_dg_2_1",
+        "j_dg_2_2",
+        "j_dg_2_3",
+        "j_dg_2_4",
+        "j_dg_3_1",
+        "j_dg_3_2",
+        "j_dg_3_3",
+        "j_dg_3_4",
+      ]
+    command_interface: effort
+    reference_and_state_interfaces: ["position"]
+    gains:
+      j_dg_1_1: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_1_2: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_1_3: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_1_4: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_2_1: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_2_2: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_2_3: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_2_4: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_3_1: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_3_2: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_3_3: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+      j_dg_3_4: { p: 1.5, i: 0.0, d: 0.0, i_clamp_max: 0.0, i_clamp_min: 0.0 }
+# Joint State Broadcaster
+/**/joint_state_broadcaster:
+  ros__parameters:
+    update_rate: 300
+    joints:
+      - j_dg_1_1
+      - j_dg_1_2
+      - j_dg_1_3
+      - j_dg_1_4
+      - j_dg_2_1
+      - j_dg_2_2
+      - j_dg_2_3
+      - j_dg_2_4
+      - j_dg_3_1
+      - j_dg_3_2
+      - j_dg_3_3
+      - j_dg_3_4

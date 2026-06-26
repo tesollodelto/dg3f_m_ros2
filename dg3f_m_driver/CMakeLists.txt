@@ -43,6 +43,8 @@ install(
   script/dg3f_m_jtc_action_test.py
   script/dg3f_m_operator_test.py
   script/dg3f_m_effort_test.py
+  script/dg3f_m_pid_test.py
+  script/dg3f_m_pid_all_test.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

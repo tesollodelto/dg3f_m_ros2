@@ -106,7 +106,7 @@ def generate_launch_description():
 
     robot_controllers = PathJoinSubstitution(
         [FindPackageShare("dg3f_m_driver"), "config",
-         "dg3f_m_pid_controller.yaml"]
+         "dg3f_m_pid_all_controller.yaml"]
     )
 
     ft_broadcaster_config = PathJoinSubstitution(
@@ -164,7 +164,7 @@ def generate_launch_description():
     delto_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["j_dg_1_1_pospid", "j_dg_1_2_pospid", "j_dg_1_3_pospid", "j_dg_1_4_pospid", "j_dg_2_1_pospid", "j_dg_2_2_pospid", "j_dg_2_3_pospid", "j_dg_2_4_pospid", "j_dg_3_1_pospid", "j_dg_3_2_pospid", "j_dg_3_3_pospid", "j_dg_3_4_pospid", "-c", "/" + ns + "/controller_manager"],
+        arguments=["j_dg_pospid", "-c", "/" + ns + "/controller_manager"],
         output="screen",
     )
 
