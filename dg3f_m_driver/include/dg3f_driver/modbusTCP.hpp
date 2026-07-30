@@ -1,7 +1,32 @@
-#include <boost/asio.hpp>
+#pragma once
+
+// Modbus TCP client over POSIX sockets.
+//
+// Previously implemented on boost::asio. Boost is no longer required anywhere in
+// this workspace, and the two APIs this used (io_service, resolver::query) were
+// deprecated in Boost 1.66 and removed in the Boost shipped with newer Ubuntu,
+// which broke the build outright. This implementation uses the same plain
+// sockets as delto_tcp_comm.
+//
+// Framing notes: every response is read using the MBAP length field rather than
+// an assumed fixed size, so a Modbus exception response (3 payload bytes) is
+// parsed and reported instead of stalling until the read timeout. Any bytes left
+// queued from a previous timed-out transaction are discarded before a new
+// request goes out, and the transaction id is verified on every reply.
+
+#include <arpa/inet.h>
+#include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
-#include <exception>
+#include <cstring>
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
@@ -9,521 +34,461 @@
 #include <thread>
 #include <vector>
 
-// Linux 전용 헤더
-#include <netinet/in.h>
-#include <sys/socket.h>
-
 class ModbusClient {
  public:
-  // 생성자: 호스트와 포트를 인자로 받아 연결 설정 (기본 타임아웃 200ms)
   explicit ModbusClient(const std::string& host, int port)
-      : socket_(io_service_),
-        host_(host),
-        port_(port),
-        transaction_id_(0) {
-    setTimeout(200);  // Change from 5000ms to 200ms
-  }
+      : host_(host),
+        port_(static_cast<uint16_t>(port)),
+        sockfd_(-1),
+        timeout_ms_(200),
+        transaction_id_(0) {}
 
   virtual ~ModbusClient() { disconnect(); }
 
-  // 읽기/쓰기 타임아웃 설정 (밀리초 단위)
+  // Default read/write timeout for subsequent transactions, in milliseconds.
   void setTimeout(int timeout_ms) {
-    try {
-      if (socket_.is_open()) {
-        struct timeval tv;
-        tv.tv_sec = timeout_ms / 1000;
-        tv.tv_usec = (timeout_ms % 1000) * 1000;
-        setsockopt(socket_.native_handle(), SOL_SOCKET, SO_RCVTIMEO,
-                   reinterpret_cast<const char*>(&tv), sizeof(tv));
-        setsockopt(socket_.native_handle(), SOL_SOCKET, SO_SNDTIMEO,
-                   reinterpret_cast<const char*>(&tv), sizeof(tv));
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "Error setting timeout: " << e.what() << std::endl;
+    if (timeout_ms > 0) {
+      timeout_ms_ = timeout_ms;
     }
   }
 
-  // Modbus 서버에 연결 (기본 타임아웃: 5초)
   bool connect(int timeout_seconds = 5) {
-    try {
-      // Close existing connection if any
-      disconnect();
-      
-      // Create resolver
-      boost::asio::ip::tcp::resolver resolver(io_service_);
-      boost::system::error_code ec;
-      boost::asio::ip::tcp::resolver::query query(host_, std::to_string(port_));
-      auto endpoints = resolver.resolve(query, ec);
-      
-      if (ec) {
-        std::cerr << "Resolver error: " << ec.message() << std::endl;
-        return false;
-      }
-      
-      // Set up socket
-      socket_.open(boost::asio::ip::tcp::v4(), ec);
-      if (ec) {
-        std::cerr << "Socket open error: " << ec.message() << std::endl;
-        return false;
-      }
-      
-      // Set socket options for timeout
-      socket_.set_option(boost::asio::socket_base::linger(true, timeout_seconds), ec);
-      
-      // Use synchronous connect directly
-      boost::system::error_code connect_ec;
-      boost::asio::connect(socket_, endpoints, connect_ec);
-      
-      if (connect_ec) {
-        std::cerr << "Connection error: " << connect_ec.message() << std::endl;
-        socket_.close(ec);
-        return false;
-      }
-      
-      // Set timeout for reads/writes
-      setTimeout(timeout_seconds * 1000);
-      
-      std::cout << "Connected to " << host_ << ":" << port_ << std::endl;
-      return true;
-    } 
-    catch (const std::exception& e) {
-      std::cerr << "Connection failed: " << e.what() << std::endl;
-      return false;
-    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    return connectLocked(timeout_seconds);
   }
 
-  // 최대 max_attempts 만큼 재연결 시도
   bool reconnect(int max_attempts = 3) {
     for (int i = 0; i < max_attempts; ++i) {
       std::cout << "Reconnection attempt " << (i + 1) << "/" << max_attempts
                 << std::endl;
-      disconnect();
-      if (connect()) {
-        return true;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        disconnectLocked();
+        if (connectLocked()) {
+          return true;
+        }
       }
       std::this_thread::sleep_for(std::chrono::seconds(1));
     }
     return false;
   }
 
-  // 연결 종료
   void disconnect() {
-    if (socket_.is_open()) {
-      boost::system::error_code ec;
-      socket_.shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-      socket_.close(ec);
-    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    disconnectLocked();
   }
 
-  // 지정 주소부터 quantity 만큼의 홀딩 레지스터 읽기
+  bool isConnected() const { return sockfd_ >= 0; }
+
+  // Discards anything still queued on the socket.
+  void clearBuffers() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    drainLocked();
+  }
+
   std::vector<int16_t> readHoldingRegisters(uint16_t start_address,
-                                              uint16_t quantity) {
-    try {
-      std::lock_guard<std::mutex> lock(mutex_);
-      uint16_t current_transaction = transaction_id_++;
-
-      std::vector<uint8_t> request = {
-          static_cast<uint8_t>(current_transaction >> 8),
-          static_cast<uint8_t>(current_transaction & 0xFF), 0x00, 0x00,
-          0x00, 0x06, 0x01, 0x03,
-          static_cast<uint8_t>(start_address >> 8),
-          static_cast<uint8_t>(start_address & 0xFF),
-          static_cast<uint8_t>(quantity >> 8),
-          static_cast<uint8_t>(quantity & 0xFF)};
-
-      boost::asio::write(socket_, boost::asio::buffer(request));
-
-      std::vector<uint8_t> response(9 + quantity * 2);
-      boost::asio::read(socket_, boost::asio::buffer(response));
-
-      // Transaction ID 검증
-      uint16_t received_transaction =
-          (response[0] << 8) | response[1];
-      if (current_transaction != received_transaction) {
-        throw std::runtime_error(
-            "Transaction ID mismatch in readHoldingRegisters");
-      }
-
-      // 함수 코드 검증
-      if (response[7] != 0x03) {
-        if (response[7] == 0x83) {
-          throw std::runtime_error("Modbus exception received");
-        }
-        throw std::runtime_error("Invalid function code");
-      }
-
-      std::vector<int16_t> registers;
-      registers.reserve(quantity);
-      for (size_t i = 0; i < quantity; ++i) {
-        int16_t value = static_cast<int16_t>(
-            (response[9 + i * 2] << 8) | response[10 + i * 2]);
-        registers.push_back(value);
-      }
-      return registers;
-    } catch (const std::exception& e) {
-      std::cerr << "Error in readHoldingRegisters: " << e.what()
-                << std::endl;
-      throw;
-    }
+                                           uint16_t quantity,
+                                           unsigned int timeout_ms = 0) {
+    return readRegisters(0x03, start_address, quantity, timeout_ms);
   }
 
-  // 지정 주소부터 quantity 만큼의 입력 레지스터 읽기
   std::vector<int16_t> readInputRegisters(uint16_t start_address,
-                                          uint16_t quantity,
-                                          unsigned int timeout_ms = 200) {
-    try {
-      // Set the timeout for this specific operation
-      setTimeout(timeout_ms);
-
-      std::lock_guard<std::mutex> lock(mutex_);
-      uint16_t current_transaction = transaction_id_++;
-
-      std::vector<uint8_t> request(12);
-      request[0] = static_cast<uint8_t>(current_transaction >> 8);
-      request[1] = static_cast<uint8_t>(current_transaction & 0xFF);
-      request[2] = 0x00;
-      request[3] = 0x00;
-      request[4] = 0x00;
-      request[5] = 0x06;
-      request[6] = 0x01;
-      request[7] = 0x04;
-      request[8] = static_cast<uint8_t>(start_address >> 8);
-      request[9] = static_cast<uint8_t>(start_address & 0xFF);
-      request[10] = static_cast<uint8_t>(quantity >> 8);
-      request[11] = static_cast<uint8_t>(quantity & 0xFF);
-
-      boost::asio::write(socket_, boost::asio::buffer(request));
-
-      std::vector<uint8_t> response(9 + quantity * 2, 0);
-      boost::system::error_code ec;
-      size_t total_bytes_read = 0;
-      auto start_time = std::chrono::steady_clock::now();
-
-      while (total_bytes_read < response.size()) {
-        // Check if we've exceeded our timeout
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
-        if (elapsed > timeout_ms) {
-          throw std::runtime_error("Read timeout after " + std::to_string(elapsed) + "ms");
-        }
-        
-        // Read what's available, with a small buffer slice for the remaining data
-        size_t bytes_read = socket_.read_some(
-          boost::asio::buffer(response.data() + total_bytes_read, 
-                             response.size() - total_bytes_read), ec);
-        
-        if (ec) {
-          if (ec == boost::asio::error::would_block || ec == boost::asio::error::try_again) {
-            // No data available, sleep briefly and retry
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-          }
-          throw std::runtime_error("Socket read error: " + ec.message());
-        }
-        
-        if (bytes_read == 0) {
-          // Connection closed
-          throw std::runtime_error("Connection closed during read");
-        }
-        
-        total_bytes_read += bytes_read;
-      }
-
-      // Transaction ID 검증 및 재시도 (최대 3회)
-      uint16_t received_transaction = (response[0] << 8) + response[1];
-      if (current_transaction != received_transaction) {
-        std::cerr << "Transaction ID mismatch. Expected: "
-                  << current_transaction << ", Got: " << received_transaction
-                  << std::endl;
-        for (int retry = 0; retry < 3; ++retry) {
-          std::cout << "Retrying... Attempt " << (retry + 1) << std::endl;
-          boost::asio::write(socket_, boost::asio::buffer(request));
-          boost::asio::read(socket_, boost::asio::buffer(response));
-          received_transaction = (response[0] << 8) + response[1];
-          if (received_transaction == current_transaction) {
-            std::cout << "Success after retry" << std::endl;
-            break;
-          }
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-        if (received_transaction != current_transaction) {
-          throw std::runtime_error("Transaction ID mismatch after retries");
-        }
-      }
-
-      // 프로토콜 ID 검증
-      if (response[2] != 0x00 || response[3] != 0x00) {
-        throw std::runtime_error("Invalid protocol ID");
-      }
-
-      // 함수 코드 검증
-      if (response[7] != 0x04) {
-        if (response[7] == 0x84) {
-          throw std::runtime_error("Modbus exception received");
-        }
-        throw std::runtime_error("Invalid function code");
-      }
-
-      // 바이트 수 검증
-      uint8_t byte_count = response[8];
-      if (byte_count != quantity * 2) {
-        throw std::runtime_error("Incorrect byte count");
-      }
-
-      std::vector<int16_t> registers;
-      registers.reserve(quantity);
-      for (size_t i = 0; i < quantity; ++i) {
-        int16_t value = static_cast<int16_t>(
-            (response[9 + i * 2] << 8) | response[10 + i * 2]);
-        registers.push_back(value);
-      }
-      return registers;
-    } catch (const std::exception& e) {
-      std::cerr << "Error in readInputRegisters: " << e.what() << std::endl;
-      throw;
-    }
+                                         uint16_t quantity,
+                                         unsigned int timeout_ms = 200) {
+    return readRegisters(0x04, start_address, quantity, timeout_ms);
   }
 
-  // 단일 코일 쓰기
   void writeSingleCoil(uint16_t address, bool value) {
-    try {
-      std::lock_guard<std::mutex> lock(mutex_);
-      uint16_t current_transaction = transaction_id_++;
-
-      std::vector<uint8_t> request = {
-          static_cast<uint8_t>(current_transaction >> 8),
-          static_cast<uint8_t>(current_transaction & 0xFF), 0x00, 0x00,
-          0x00, 0x06, 0x01, 0x05,
-          static_cast<uint8_t>(address >> 8),
-          static_cast<uint8_t>(address & 0xFF),
-          static_cast<uint8_t>(value ? 0xFF : 0x00), 0x00};
-
-      boost::asio::write(socket_, boost::asio::buffer(request));
-
-      std::vector<uint8_t> response(12);
-      boost::asio::read(socket_, boost::asio::buffer(response));
-
-      uint16_t received_transaction =
-          (response[0] << 8) | response[1];
-      if (current_transaction != received_transaction) {
-        throw std::runtime_error("Transaction ID mismatch");
-      }
-
-      if (response[7] != 0x05) {
-        if (response[7] == 0x85) {
-          throw std::runtime_error("Modbus exception received");
-        }
-        throw std::runtime_error("Invalid function code");
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "Error in writeSingleCoil: " << e.what() << std::endl;
-      throw;
-    }
+    std::vector<uint8_t> pdu = {0x05,
+                               static_cast<uint8_t>(address >> 8),
+                               static_cast<uint8_t>(address & 0xFF),
+                               static_cast<uint8_t>(value ? 0xFF : 0x00),
+                               0x00};
+    transact("writeSingleCoil", pdu, 0x05, 0);
   }
 
-  // 다중 코일 쓰기
-  void writeMultiCoils(uint16_t address,
-                       const std::vector<bool>& values) {
-    try {
-      std::lock_guard<std::mutex> lock(mutex_);
-      uint16_t current_transaction = transaction_id_++;
-
-      size_t num_bytes = (values.size() + 7) / 8;
-      std::vector<uint8_t> value_bytes(num_bytes, 0x00);
-      for (size_t i = 0; i < values.size(); ++i) {
-        if (values[i]) {
-          value_bytes[i / 8] |= 1 << (i % 8);
-        }
-      }
-
-      std::vector<uint8_t> request = {
-          static_cast<uint8_t>(current_transaction >> 8),
-          static_cast<uint8_t>(current_transaction & 0xFF), 0x00, 0x00,
-          static_cast<uint8_t>((7 + num_bytes) >> 8),
-          static_cast<uint8_t>((7 + num_bytes) & 0xFF),
-          0x01, 0x0F,
-          static_cast<uint8_t>(address >> 8),
-          static_cast<uint8_t>(address & 0xFF),
-          static_cast<uint8_t>(values.size() >> 8),
-          static_cast<uint8_t>(values.size() & 0xFF),
-          static_cast<uint8_t>(num_bytes)};
-      request.insert(request.end(), value_bytes.begin(), value_bytes.end());
-
-      boost::asio::write(socket_, boost::asio::buffer(request));
-
-      std::vector<uint8_t> response(12);
-      boost::asio::read(socket_, boost::asio::buffer(response));
-
-      uint16_t received_transaction =
-          (response[0] << 8) | response[1];
-      if (current_transaction != received_transaction) {
-        throw std::runtime_error("Transaction ID mismatch");
-      }
-
-      if (response[7] != 0x0F) {
-        if (response[7] == 0x8F) {
-          throw std::runtime_error("Modbus exception received");
-        }
-        throw std::runtime_error("Invalid function code");
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "Error in writeMultiCoils: " << e.what() << std::endl;
-      throw;
+  void writeMultiCoils(uint16_t address, const std::vector<bool>& values) {
+    if (values.empty()) {
+      throw std::runtime_error("writeMultiCoils: no values");
     }
+    const std::size_t num_bytes = (values.size() + 7) / 8;
+    std::vector<uint8_t> packed(num_bytes, 0x00);
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (values[i]) {
+        packed[i / 8] = static_cast<uint8_t>(packed[i / 8] | (1u << (i % 8)));
+      }
+    }
+
+    std::vector<uint8_t> pdu = {0x0F,
+                               static_cast<uint8_t>(address >> 8),
+                               static_cast<uint8_t>(address & 0xFF),
+                               static_cast<uint8_t>(values.size() >> 8),
+                               static_cast<uint8_t>(values.size() & 0xFF),
+                               static_cast<uint8_t>(num_bytes)};
+    pdu.insert(pdu.end(), packed.begin(), packed.end());
+    transact("writeMultiCoils", pdu, 0x0F, 0);
   }
 
-  // 단일 레지스터 쓰기
   void writeSingleRegister(uint16_t address, uint16_t value) {
-    try {
-      std::lock_guard<std::mutex> lock(mutex_);
-      uint16_t current_transaction = transaction_id_++;
-
-      std::vector<uint8_t> request = {
-          static_cast<uint8_t>(current_transaction >> 8),
-          static_cast<uint8_t>(current_transaction & 0xFF), 0x00, 0x00,
-          0x00, 0x06, 0x01, 0x06,
-          static_cast<uint8_t>(address >> 8),
-          static_cast<uint8_t>(address & 0xFF),
-          static_cast<uint8_t>(value >> 8),
-          static_cast<uint8_t>(value & 0xFF)};
-
-      boost::asio::write(socket_, boost::asio::buffer(request));
-
-      std::vector<uint8_t> response(12);
-      boost::asio::read(socket_, boost::asio::buffer(response));
-
-      uint16_t received_transaction =
-          (response[0] << 8) | response[1];
-      if (current_transaction != received_transaction) {
-        throw std::runtime_error("Transaction ID mismatch");
-      }
-
-      if (response[7] != 0x06) {
-        if (response[7] == 0x86) {
-          throw std::runtime_error("Modbus exception received");
-        }
-        throw std::runtime_error("Invalid function code");
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "Error in writeSingleRegister: " << e.what() << std::endl;
-      throw;
-    }
+    std::vector<uint8_t> pdu = {0x06,
+                               static_cast<uint8_t>(address >> 8),
+                               static_cast<uint8_t>(address & 0xFF),
+                               static_cast<uint8_t>(value >> 8),
+                               static_cast<uint8_t>(value & 0xFF)};
+    transact("writeSingleRegister", pdu, 0x06, 0);
   }
 
-  // 다중 레지스터 쓰기
   void writeMultiRegisters(uint16_t address,
                            const std::vector<uint16_t>& values) {
-    try {
-      std::lock_guard<std::mutex> lock(mutex_);
-      uint16_t current_transaction = transaction_id_++;
-
-      size_t values_bytes = values.size() * 2;
-      std::vector<uint8_t> request = {
-          static_cast<uint8_t>(current_transaction >> 8),
-          static_cast<uint8_t>(current_transaction & 0xFF), 0x00, 0x00,
-          static_cast<uint8_t>((7 + values_bytes) >> 8),
-          static_cast<uint8_t>((7 + values_bytes) & 0xFF),
-          0x01, 0x10,
-          static_cast<uint8_t>(address >> 8),
-          static_cast<uint8_t>(address & 0xFF),
-          static_cast<uint8_t>(values.size() >> 8),
-          static_cast<uint8_t>(values.size() & 0xFF),
-          static_cast<uint8_t>(values_bytes)};
-
-      for (const auto& value : values) {
-        request.push_back(static_cast<uint8_t>(value >> 8));
-        request.push_back(static_cast<uint8_t>(value & 0xFF));
-      }
-
-      boost::asio::write(socket_, boost::asio::buffer(request));
-
-      std::vector<uint8_t> response(12);
-      boost::asio::read(socket_, boost::asio::buffer(response));
-
-      uint16_t received_transaction =
-          (response[0] << 8) | response[1];
-      if (current_transaction != received_transaction) {
-        throw std::runtime_error("Transaction ID mismatch");
-      }
-
-      if (response[7] != 0x10) {
-        if (response[7] == 0x90) {
-          throw std::runtime_error("Modbus exception received");
-        }
-        throw std::runtime_error("Invalid function code");
-      }
-    } catch (const std::exception& e) {
-      std::cerr << "Error in writeMultiRegisters: " << e.what() << std::endl;
-      throw;
+    if (values.empty()) {
+      throw std::runtime_error("writeMultiRegisters: no values");
     }
-  }
-
-  // 연결 상태 확인
-  bool isConnected() const {
-    return socket_.is_open();
-  }
-
-  // 소켓 버퍼 내 남은 데이터를 제거
-  void clearBuffers() {
-    if (socket_.is_open()) {
-      boost::system::error_code ec;
-      socket_.cancel(ec);
-      std::vector<uint8_t> buffer(1024);
-      int max_iterations = 10; // Prevent infinite loop
-      
-      while (socket_.available() > 0 && max_iterations-- > 0) {
-        std::size_t bytes_read = socket_.read_some(boost::asio::buffer(buffer), ec);
-        if (ec || bytes_read == 0) {
-          break; // Exit if error or no bytes read
-        }
-      }
+    if (values.size() > 123) {  // Modbus caps FC16 at 123 registers
+      throw std::runtime_error("writeMultiRegisters: " +
+                               std::to_string(values.size()) +
+                               " registers exceeds the Modbus limit of 123");
     }
+
+    const std::size_t values_bytes = values.size() * 2;
+    std::vector<uint8_t> pdu = {0x10,
+                               static_cast<uint8_t>(address >> 8),
+                               static_cast<uint8_t>(address & 0xFF),
+                               static_cast<uint8_t>(values.size() >> 8),
+                               static_cast<uint8_t>(values.size() & 0xFF),
+                               static_cast<uint8_t>(values_bytes)};
+    for (const uint16_t v : values) {
+      pdu.push_back(static_cast<uint8_t>(v >> 8));
+      pdu.push_back(static_cast<uint8_t>(v & 0xFF));
+    }
+    transact("writeMultiRegisters", pdu, 0x10, 0);
   }
 
  private:
-  boost::asio::io_service io_service_;
-  boost::asio::ip::tcp::socket socket_;
+  // MBAP: transaction(2) protocol(2) length(2) unit(1)
+  static constexpr std::size_t MBAP_SIZE = 7;
+  static constexpr uint8_t UNIT_ID = 0x01;
+  // Guards against a corrupt length field turning into a huge allocation.
+  static constexpr uint16_t MAX_PDU_LENGTH = 260;
+
   std::string host_;
   uint16_t port_;
+  int sockfd_;
+  int timeout_ms_;
   std::atomic<uint16_t> transaction_id_;
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
 
-  // Modbus 예외 처리를 위한 헬퍼 함수
+  // -------------------------------------------------------------------------
+  // Connection
+  // -------------------------------------------------------------------------
+
+  void disconnectLocked() {
+    if (sockfd_ >= 0) {
+      ::close(sockfd_);
+      sockfd_ = -1;
+    }
+  }
+
+  bool connectLocked(int timeout_seconds = 5) {
+    disconnectLocked();
+
+    sockfd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd_ < 0) {
+      std::cerr << "Socket open error: " << std::strerror(errno) << std::endl;
+      return false;
+    }
+
+    struct sockaddr_in addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port_);
+    if (::inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) <= 0) {
+      std::cerr << "Invalid host address: " << host_ << std::endl;
+      disconnectLocked();
+      return false;
+    }
+
+    // Non-blocking connect with an explicit deadline: a blocking connect() to
+    // an unreachable host sits in the kernel SYN retry for about two minutes.
+    const int flags = ::fcntl(sockfd_, F_GETFL, 0);
+    if (flags < 0 || ::fcntl(sockfd_, F_SETFL, flags | O_NONBLOCK) < 0) {
+      std::cerr << "fcntl error: " << std::strerror(errno) << std::endl;
+      disconnectLocked();
+      return false;
+    }
+
+    int rc = ::connect(sockfd_, reinterpret_cast<struct sockaddr*>(&addr),
+                       sizeof(addr));
+    if (rc < 0 && errno != EINPROGRESS) {
+      std::cerr << "Connection error: " << std::strerror(errno) << std::endl;
+      disconnectLocked();
+      return false;
+    }
+    if (rc < 0) {
+      struct pollfd pfd;
+      pfd.fd = sockfd_;
+      pfd.events = POLLOUT;
+      const int ret = ::poll(&pfd, 1, timeout_seconds * 1000);
+      if (ret <= 0) {
+        std::cerr << "Connection to " << host_ << ":" << port_
+                  << (ret == 0 ? " timed out" : " failed in poll") << std::endl;
+        disconnectLocked();
+        return false;
+      }
+      int soerr = 0;
+      socklen_t len = sizeof(soerr);
+      if (::getsockopt(sockfd_, SOL_SOCKET, SO_ERROR, &soerr, &len) < 0 ||
+          soerr != 0) {
+        std::cerr << "Connection error: "
+                  << std::strerror(soerr != 0 ? soerr : errno) << std::endl;
+        disconnectLocked();
+        return false;
+      }
+    }
+    if (::fcntl(sockfd_, F_SETFL, flags) < 0) {
+      std::cerr << "fcntl restore error: " << std::strerror(errno) << std::endl;
+      disconnectLocked();
+      return false;
+    }
+
+    const int nodelay = 1;
+    ::setsockopt(sockfd_, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+
+    std::cout << "Connected to " << host_ << ":" << port_ << std::endl;
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Low-level I/O
+  // -------------------------------------------------------------------------
+
+  bool sendAllLocked(const uint8_t* data, std::size_t len, int timeout_ms) {
+    if (sockfd_ < 0) return false;
+    std::size_t sent = 0;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeout_ms);
+    while (sent < len) {
+      const int remaining = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              deadline - std::chrono::steady_clock::now()).count());
+      if (remaining <= 0) return false;
+
+      struct pollfd pfd;
+      pfd.fd = sockfd_;
+      pfd.events = POLLOUT;
+      const int ret = ::poll(&pfd, 1, remaining);
+      if (ret < 0) {
+        if (errno == EINTR) continue;
+        return false;
+      }
+      if (ret == 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+        return false;
+      }
+
+      const ssize_t n = ::send(sockfd_, data + sent, len - sent, MSG_NOSIGNAL);
+      if (n < 0) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
+        return false;
+      }
+      if (n == 0) return false;
+      sent += static_cast<std::size_t>(n);
+    }
+    return true;
+  }
+
+  // Accumulates until `len` bytes have arrived; a short read is normal on TCP.
+  bool recvAllLocked(uint8_t* data, std::size_t len, int timeout_ms) {
+    if (sockfd_ < 0) return false;
+    std::size_t received = 0;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeout_ms);
+    while (received < len) {
+      const int remaining = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              deadline - std::chrono::steady_clock::now()).count());
+      if (remaining <= 0) return false;
+
+      struct pollfd pfd;
+      pfd.fd = sockfd_;
+      pfd.events = POLLIN;
+      const int ret = ::poll(&pfd, 1, remaining);
+      if (ret < 0) {
+        if (errno == EINTR) continue;
+        return false;
+      }
+      if (ret == 0 || (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+        return false;
+      }
+
+      const ssize_t n = ::recv(sockfd_, data + received, len - received, 0);
+      if (n < 0) {
+        if (errno == EINTR) continue;
+        return false;
+      }
+      if (n == 0) return false;  // peer closed
+      received += static_cast<std::size_t>(n);
+    }
+    return true;
+  }
+
+  void drainLocked() {
+    if (sockfd_ < 0) return;
+    uint8_t scratch[256];
+    std::size_t dropped = 0;
+    while (true) {
+      const ssize_t n = ::recv(sockfd_, scratch, sizeof(scratch), MSG_DONTWAIT);
+      if (n <= 0) break;
+      dropped += static_cast<std::size_t>(n);
+      if (dropped > 64 * 1024) break;
+    }
+    if (dropped > 0) {
+      std::cerr << "Discarded " << dropped
+                << " stale bytes before request (stream was desynced)"
+                << std::endl;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Transaction
+  // -------------------------------------------------------------------------
+
+  // Sends one PDU and returns the response PDU (function code first).
+  // Throws on timeout, framing error, transaction-id mismatch or a Modbus
+  // exception response.
+  std::vector<uint8_t> transact(const char* what,
+                                const std::vector<uint8_t>& pdu,
+                                uint8_t expected_fc,
+                                unsigned int timeout_ms) {
+    const int tmo = timeout_ms > 0 ? static_cast<int>(timeout_ms) : timeout_ms_;
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (sockfd_ < 0) {
+      throw std::runtime_error(std::string(what) + ": not connected");
+    }
+
+    // A reply left over from a previously timed-out transaction would otherwise
+    // be read as the answer to this one.
+    drainLocked();
+
+    const uint16_t txn = transaction_id_++;
+    const std::size_t length_field = pdu.size() + 1;  // unit id + PDU
+
+    std::vector<uint8_t> request;
+    request.reserve(MBAP_SIZE + pdu.size());
+    request.push_back(static_cast<uint8_t>(txn >> 8));
+    request.push_back(static_cast<uint8_t>(txn & 0xFF));
+    request.push_back(0x00);
+    request.push_back(0x00);
+    request.push_back(static_cast<uint8_t>(length_field >> 8));
+    request.push_back(static_cast<uint8_t>(length_field & 0xFF));
+    request.push_back(UNIT_ID);
+    request.insert(request.end(), pdu.begin(), pdu.end());
+
+    if (!sendAllLocked(request.data(), request.size(), tmo)) {
+      disconnectLocked();
+      throw std::runtime_error(std::string(what) + ": send failed");
+    }
+
+    uint8_t mbap[MBAP_SIZE];
+    if (!recvAllLocked(mbap, MBAP_SIZE, tmo)) {
+      throw std::runtime_error(std::string(what) + ": header read timeout");
+    }
+
+    const uint16_t rx_txn = static_cast<uint16_t>((mbap[0] << 8) | mbap[1]);
+    const uint16_t protocol = static_cast<uint16_t>((mbap[2] << 8) | mbap[3]);
+    const uint16_t rx_length = static_cast<uint16_t>((mbap[4] << 8) | mbap[5]);
+
+    if (protocol != 0x0000) {
+      disconnectLocked();
+      throw std::runtime_error(std::string(what) + ": invalid protocol id");
+    }
+    // rx_length covers the unit id plus the PDU, so it must be at least 2
+    // (unit + function code).
+    if (rx_length < 2 || rx_length > MAX_PDU_LENGTH) {
+      disconnectLocked();
+      throw std::runtime_error(std::string(what) + ": invalid length field " +
+                               std::to_string(rx_length));
+    }
+
+    std::vector<uint8_t> body(static_cast<std::size_t>(rx_length) - 1);
+    if (!recvAllLocked(body.data(), body.size(), tmo)) {
+      throw std::runtime_error(std::string(what) + ": body read timeout");
+    }
+
+    if (rx_txn != txn) {
+      throw std::runtime_error(std::string(what) +
+                               ": transaction id mismatch (expected " +
+                               std::to_string(txn) + ", got " +
+                               std::to_string(rx_txn) + ")");
+    }
+
+    const uint8_t fc = body[0];
+    if (fc == static_cast<uint8_t>(expected_fc | 0x80)) {
+      // Exception response: unit(1) fc(1) code(1), i.e. rx_length == 3.
+      handleModbusException(body.size() > 1 ? body[1] : 0x00);
+    }
+    if (fc != expected_fc) {
+      throw std::runtime_error(std::string(what) + ": unexpected function code " +
+                               std::to_string(static_cast<int>(fc)));
+    }
+    return body;
+  }
+
+  std::vector<int16_t> readRegisters(uint8_t fc, uint16_t start_address,
+                                    uint16_t quantity,
+                                    unsigned int timeout_ms) {
+    if (quantity == 0 || quantity > 125) {
+      throw std::runtime_error("readRegisters: quantity " +
+                               std::to_string(quantity) + " out of range 1..125");
+    }
+
+    const std::vector<uint8_t> pdu = {
+        fc,
+        static_cast<uint8_t>(start_address >> 8),
+        static_cast<uint8_t>(start_address & 0xFF),
+        static_cast<uint8_t>(quantity >> 8),
+        static_cast<uint8_t>(quantity & 0xFF)};
+
+    const std::vector<uint8_t> body =
+        transact("readRegisters", pdu, fc, timeout_ms);
+
+    // body: fc(1) byte_count(1) data(2N)
+    if (body.size() < 2) {
+      throw std::runtime_error("readRegisters: truncated response");
+    }
+    const uint8_t byte_count = body[1];
+    if (byte_count != quantity * 2 ||
+        body.size() < static_cast<std::size_t>(2) + byte_count) {
+      throw std::runtime_error(
+          "readRegisters: byte count " + std::to_string(byte_count) +
+          " does not match the requested " + std::to_string(quantity * 2) +
+          " bytes");
+    }
+
+    std::vector<int16_t> registers;
+    registers.reserve(quantity);
+    for (std::size_t i = 0; i < quantity; ++i) {
+      registers.push_back(static_cast<int16_t>(
+          (static_cast<uint16_t>(body[2 + i * 2]) << 8) | body[3 + i * 2]));
+    }
+    return registers;
+  }
+
   void handleModbusException(uint8_t exception_code) {
     std::string error;
     switch (exception_code) {
-      case 0x01:
-        error = "Illegal function";
-        break;
-      case 0x02:
-        error = "Illegal data address";
-        break;
-      case 0x03:
-        error = "Illegal data value";
-        break;
-      case 0x04:
-        error = "Slave device failure";
-        break;
-      case 0x05:
-        error = "Acknowledge";
-        break;
-      case 0x06:
-        error = "Slave device busy";
-        break;
-      case 0x08:
-        error = "Memory parity error";
-        break;
-      case 0x0A:
-        error = "Gateway path unavailable";
-        break;
-      case 0x0B:
-        error = "Gateway target device failed to respond";
-        break;
-      default:
-        error = "Unknown error";
-        break;
+      case 0x01: error = "Illegal function"; break;
+      case 0x02: error = "Illegal data address"; break;
+      case 0x03: error = "Illegal data value"; break;
+      case 0x04: error = "Slave device failure"; break;
+      case 0x05: error = "Acknowledge"; break;
+      case 0x06: error = "Slave device busy"; break;
+      case 0x08: error = "Memory parity error"; break;
+      case 0x0A: error = "Gateway path unavailable"; break;
+      case 0x0B: error = "Gateway target device failed to respond"; break;
+      default:   error = "Unknown exception code"; break;
     }
-    throw std::runtime_error("Modbus exception: " + error);
+    throw std::runtime_error("Modbus exception 0x" +
+                             std::to_string(static_cast<int>(exception_code)) +
+                             ": " + error);
   }
 };
-

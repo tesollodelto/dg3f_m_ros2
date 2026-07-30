@@ -28,6 +28,9 @@
 
 #pragma once
 
+#include <cmath>
+#include <cstddef>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <memory>
@@ -54,8 +57,8 @@ public:
 
   virtual ~DG3F_TCP() = default;
 
-  void connect() {
-    ModbusClient_->connect();
+  bool connect() {
+    return ModbusClient_->connect();
   }
 
   // Add missing get_data method
@@ -114,13 +117,35 @@ public:
     return velocities;
   }
   
-  bool set_position_rad(std::vector<double> positions) {
-    std::vector<uint16_t> position_int(positions.size());
-    
-    for (size_t i = 0; i < positions.size(); i++) {
-      position_int[i] = static_cast<uint16_t>(positions[i] / RAD_SCALE);
+  // Holding Register MOTOR1_TARGET_POSITION + i holds motor i+1's target
+  // position, x10 (0.1 deg per LSB) with a valid range of -1800..1800. Writing
+  // more than MOTOR_NUM values runs off the end of this model's target block
+  // into the neighbouring motors' targets and then, from HR 27, into the
+  // target-position reach times, so the count is clamped here.
+  bool set_position_rad(const std::vector<double>& positions) {
+    const std::size_t count =
+        std::min<std::size_t>(positions.size(), static_cast<std::size_t>(MOTOR_NUM));
+    if (positions.size() != static_cast<std::size_t>(MOTOR_NUM)) {
+      std::cerr << "set_position_rad: received " << positions.size()
+                << " values for " << MOTOR_NUM << " motors; using " << count
+                << std::endl;
     }
-    
+    if (count == 0) {
+      return false;
+    }
+
+    std::vector<uint16_t> position_int(count);
+    for (std::size_t i = 0; i < count; ++i) {
+      // The register is a signed 16-bit value; a plain cast to uint16_t turned
+      // a legal negative target into ~65000 and drove the joint to the
+      // opposite limit.
+      double raw = std::round(positions[i] / RAD_SCALE);
+      if (raw < POSITION_TARGET_MIN) raw = POSITION_TARGET_MIN;
+      if (raw > POSITION_TARGET_MAX) raw = POSITION_TARGET_MAX;
+      position_int[i] =
+          static_cast<uint16_t>(static_cast<int16_t>(static_cast<int>(raw)));
+    }
+
     ModbusClient_->writeMultiRegisters(MOTOR1_TARGET_POSITION, position_int);
     return true;
   }
@@ -138,6 +163,9 @@ private:
   // Constants (adjust as needed)
   static constexpr int MOTOR_NUM = 12;
   static constexpr double RAD_SCALE = M_PI / 1800.0;
+  // Control Manual: 모터 N 위치 타겟값 [-1800 to 1800] (x10 => 0.1 deg/LSB)
+  static constexpr int POSITION_TARGET_MIN = -1800;
+  static constexpr int POSITION_TARGET_MAX = 1800;
   static constexpr double VELOCITY_SCALE = M_PI/30.0;
   static constexpr double CURRENT_SCALE = 0.001;
   static constexpr int MOTOR1_CURRENT_POSITION = 6;

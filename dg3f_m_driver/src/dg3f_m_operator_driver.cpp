@@ -10,9 +10,13 @@
 
 using namespace std::chrono_literals;
 
+// One name per motor, in motor order, matching dg3f_m_ros2_control.xacro.
+// This list previously held 10 names for 12 motors, so every published
+// JointState had mismatched name/position lengths and the last two joints were
+// silently dropped by consumers that zip the two arrays.
 std::vector<std::string> joint_names = {
-    "j_dg_1_1", "j_dg_1_2", "j_dg_1_3", "j_dg_1_4", "j_dg_2_1",
-    "j_dg_2_2", "j_dg_2_3", "j_dg_2_4", "j_dg_3_1", "j_dg_3_2"};
+    "j_dg_1_1", "j_dg_1_2", "j_dg_1_3", "j_dg_1_4", "j_dg_2_1", "j_dg_2_2",
+    "j_dg_2_3", "j_dg_2_4", "j_dg_3_1", "j_dg_3_2", "j_dg_3_3", "j_dg_3_4"};
 
 class DG3FDriver : public rclcpp::Node {
  public:
@@ -34,14 +38,10 @@ class DG3FDriver : public rclcpp::Node {
     timer_ = this->create_wall_timer(
         50ms, std::bind(&DG3FDriver::timer_callback, this));
 
-    try {
-      delto_client_ = std::make_unique<DG3F_TCP>(ip_, port_);
-      delto_client_->connect();
-    } catch (const boost::system::system_error& e) {
-      if (e.code() != boost::asio::error::operation_aborted &&
-          e.code() != boost::asio::error::interrupted) {
-        throw;
-      }
+    delto_client_ = std::make_unique<DG3F_TCP>(ip_, port_);
+    if (!delto_client_->connect()) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "Failed to connect to %s:%d", ip_.c_str(), port_);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     delto_client_->start_control();
@@ -66,12 +66,25 @@ class DG3FDriver : public rclcpp::Node {
     for (const auto& value : msg->data) {
       std::cout << value << " ";
     }
-
-    delto_client_->set_position_rad(msg->data);   
+    try {
+      delto_client_->set_position_rad(msg->data);
+    } catch (const std::exception& e) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                           "Modbus write failed: %s", e.what());
+    }
   }
 
   void timer_callback() {
-    data = delto_client_->get_data();
+    // A Modbus timeout or exception response throws. Left uncaught it
+    // propagates out of the executor and terminates the process, so one
+    // dropped frame used to kill the node.
+    try {
+      data = delto_client_->get_data();
+    } catch (const std::exception& e) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                           "Modbus read failed: %s", e.what());
+      return;
+    }
 
     // Publish joint states
     auto joint_state = sensor_msgs::msg::JointState();
@@ -102,10 +115,16 @@ int main(int argc, char* argv[]) {
   rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(),
                                                     2);
 
-  auto node = std::make_shared<DG3FDriver>();
-
-  executor.add_node(node);
-  executor.spin();
+  try {
+    auto node = std::make_shared<DG3FDriver>();
+    executor.add_node(node);
+    executor.spin();
+  } catch (const std::exception& e) {
+    RCLCPP_ERROR(rclcpp::get_logger("DG3FDriver"),
+                 "Fatal error: %s", e.what());
+    rclcpp::shutdown();
+    return 1;
+  }
 
   rclcpp::shutdown();
 }

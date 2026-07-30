@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.12)
 project(dg3f_m_gz)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -10,7 +10,17 @@ find_package(rclcpp REQUIRED)
 find_package(trajectory_msgs REQUIRED)
 
 add_executable(dg3f_m_gz_test_cpp src/dg3f_m_gz_test.cpp)
-ament_target_dependencies(dg3f_m_gz_test_cpp rclcpp trajectory_msgs)
+# ament_target_dependencies() was removed in the ament_cmake shipped with
+# ROS 2 Lyrical. Detect the command rather than the distro so one
+# CMakeLists covers Humble, Jazzy and Lyrical.
+if(COMMAND ament_target_dependencies)
+  ament_target_dependencies(dg3f_m_gz_test_cpp rclcpp trajectory_msgs)
+else()
+  target_link_libraries(dg3f_m_gz_test_cpp
+    rclcpp::rclcpp
+    ${trajectory_msgs_TARGETS}
+  )
+endif()
 
 
 install(TARGETS 
