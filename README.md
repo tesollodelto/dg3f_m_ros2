@@ -1,11 +1,14 @@
-# DG3F-M ROS 2
+# TESOLLO DG-3F-M ROS 2
 
-[![CI](https://github.com/tesollodelto/dg3f_m_ros2/actions/workflows/ci.yml/badge.svg)](https://github.com/tesollodelto/dg3f_m_ros2/actions/workflows/ci.yml)
-![ROS 2 Humble](https://img.shields.io/badge/ROS_2-Humble-blue?logo=ros)
-![ROS 2 Jazzy](https://img.shields.io/badge/ROS_2-Jazzy-blue?logo=ros)
-![ROS 2 Lyrical](https://img.shields.io/badge/ROS_2-Lyrical-orange?logo=ros)
+Official ROS 2 packages for the **TESOLLO DG-3F-M**, a 12-DoF, 3-finger robotic gripper engineered for industrial automation and dexterous manipulation.
 
-ROS 2 packages for the **Delto Gripper DG3F-M** (3-finger, medium size).
+This repository provides ROS 2 resources for simulation and real-hardware integration, including **URDF/Xacro robot descriptions, ros2_control hardware interfaces, Gazebo simulation, RViz visualization, and MoveIt 2 configurations**.
+
+### Resources
+
+- [DG-3F-M Product Page](https://www.tesollo.com/products/grippers/dg-3f-m)
+- [TESOLLO ROS 2 Documentation](https://tesollodelto.github.io/tesollo_ros2/)
+- [TESOLLO ROS 2 Repository](https://github.com/tesollodelto/tesollo_ros2)
 
 ## Packages
 
